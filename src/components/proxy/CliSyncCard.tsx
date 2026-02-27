@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { copyToClipboard } from '../../utils/clipboard';
 import { request as invoke } from '../../utils/request';
+import { isTauri } from '../../utils/env';
 import { showToast } from '../common/ToastContainer';
 import ModalDialog from '../common/ModalDialog';
 import { cn } from '../../utils/cn';
@@ -44,8 +45,15 @@ interface CliStatus {
     synced_count?: number;
 }
 
+interface ExportStatus {
+    exported: boolean;
+    export_dir: string;
+    files: { name: string; export_path: string; target_path: string }[];
+}
+
 export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) => {
     const { t } = useTranslation();
+    const isWebMode = !isTauri();
     const [statuses, setStatuses] = useState<Record<CliAppType, CliStatus | null>>({
         Claude: null,
         Codex: null,
@@ -86,6 +94,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     const [syncConfirmApp, setSyncConfirmApp] = useState<CliAppType | null>(null);
     const [openCodeSyncModal, setOpenCodeSyncModal] = useState(false);
     const [clearConfirmApp, setClearConfirmApp] = useState<CliAppType | null>(null);
+    const [exportStatuses, setExportStatuses] = useState<Record<CliAppType, ExportStatus | null>>({
+        Claude: null, Codex: null, Gemini: null, OpenCode: null, Droid: null
+    });
 
     const { models: proxyModels } = useProxyModels();
 
@@ -110,30 +121,66 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     const checkStatus = useCallback(async (app: CliAppType) => {
         setLoading(prev => ({ ...prev, [app]: true }));
         try {
-            const formattedUrl = getFormattedProxyUrl(app);
-            let command: string;
-            let params: Record<string, unknown>;
-            if (app === 'Droid') {
-                command = 'get_droid_sync_status';
-                params = { proxyUrl: formattedUrl };
-            } else if (app === 'OpenCode') {
-                command = 'get_opencode_sync_status';
-                params = { proxyUrl: formattedUrl };
+            if (isWebMode) {
+                // Web/Docker mode: check export status instead of CLI installation
+                let command: string;
+                let params: Record<string, unknown>;
+                if (app === 'Droid') {
+                    command = 'get_droid_export_status';
+                    params = {};
+                } else if (app === 'OpenCode') {
+                    command = 'get_opencode_export_status';
+                    params = {};
+                } else {
+                    command = 'get_cli_export_status';
+                    params = { appType: app };
+                }
+                const exportStatus = await invoke<ExportStatus>(command, params);
+                setExportStatuses(prev => ({ ...prev, [app]: exportStatus }));
+                // Set a synthetic CliStatus so existing UI logic works
+                setStatuses(prev => ({
+                    ...prev,
+                    [app]: {
+                        installed: true, // Always "available" in web mode
+                        version: null,
+                        is_synced: exportStatus.exported,
+                        has_backup: false,
+                        current_base_url: exportStatus.exported ? exportStatus.export_dir : null,
+                        files: exportStatus.files.map(f => f.name),
+                    }
+                }));
             } else {
-                command = 'get_cli_sync_status';
-                params = { appType: app, proxyUrl: formattedUrl };
-            }
+                // Desktop/Tauri mode: original behavior
+                const formattedUrl = getFormattedProxyUrl(app);
+                let command: string;
+                let params: Record<string, unknown>;
+                if (app === 'Droid') {
+                    command = 'get_droid_sync_status';
+                    params = { proxyUrl: formattedUrl };
+                } else if (app === 'OpenCode') {
+                    command = 'get_opencode_sync_status';
+                    params = { proxyUrl: formattedUrl };
+                } else {
+                    command = 'get_cli_sync_status';
+                    params = { appType: app, proxyUrl: formattedUrl };
+                }
 
-            const status = await invoke<CliStatus>(command, params);
-            setStatuses(prev => ({ ...prev, [app]: status }));
+                const status = await invoke<CliStatus>(command, params);
+                setStatuses(prev => ({ ...prev, [app]: status }));
+            }
         } catch (error) {
             console.error(`Failed to check ${app} status:`, error);
         } finally {
             setLoading(prev => ({ ...prev, [app]: false }));
         }
-    }, [getFormattedProxyUrl]);
+    }, [getFormattedProxyUrl, isWebMode]);
 
     const handleSync = async (app: CliAppType) => {
+        if (isWebMode) {
+            // Web mode: export directly without modals
+            setSyncConfirmApp(app);
+            return;
+        }
         if (app === 'Droid') {
             setDroidSyncModal(true);
             return;
@@ -155,18 +202,49 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
             return;
         }
 
+        setSyncing(prev => ({ ...prev, [app]: true }));
         try {
             const formattedUrl = getFormattedProxyUrl(app);
-            const command = app === 'OpenCode' ? 'execute_opencode_sync' : 'execute_cli_sync';
-            const params = app === 'OpenCode'
-                ? { proxyUrl: formattedUrl, apiKey: apiKey, syncAccounts: syncAccounts }
-                : { appType: app, proxyUrl: formattedUrl, apiKey: apiKey, model: selectedModels[app] };
 
-            await invoke(command, params);
-            showToast(t(app === 'OpenCode' ? 'proxy.opencode_sync.toast.sync_success' : 'proxy.cli_sync.toast.sync_success', { name: app, defaultValue: `${app} synced successfully` }), 'success');
-            await checkStatus(app);
+            if (isWebMode) {
+                // Web/Docker mode: export configs to one-click-sync directory
+                let command: string;
+                let params: Record<string, unknown>;
+                if (app === 'Droid') {
+                    command = 'export_droid_config';
+                    params = { proxyUrl: formattedUrl, apiKey };
+                } else if (app === 'OpenCode') {
+                    command = 'export_opencode_config';
+                    params = { proxyUrl: formattedUrl, apiKey };
+                } else {
+                    command = 'export_cli_config';
+                    params = { appType: app, proxyUrl: formattedUrl, apiKey, model: selectedModels[app] };
+                }
+
+                const result = await invoke<{ export_dir: string; files: { name: string }[] }>(command, params);
+                showToast(
+                    t('proxy.cli_sync.toast.export_success', {
+                        name: app,
+                        path: result.export_dir,
+                        defaultValue: `${app} configs exported to ${result.export_dir}`
+                    }),
+                    'success'
+                );
+                await checkStatus(app);
+            } else {
+                // Desktop/Tauri mode: original sync behavior
+                const command = app === 'OpenCode' ? 'execute_opencode_sync' : 'execute_cli_sync';
+                const params = app === 'OpenCode'
+                    ? { proxyUrl: formattedUrl, apiKey: apiKey, syncAccounts: syncAccounts }
+                    : { appType: app, proxyUrl: formattedUrl, apiKey: apiKey, model: selectedModels[app] };
+
+                await invoke(command, params);
+                showToast(t(app === 'OpenCode' ? 'proxy.opencode_sync.toast.sync_success' : 'proxy.cli_sync.toast.sync_success', { name: app, defaultValue: `${app} synced successfully` }), 'success');
+                await checkStatus(app);
+            }
         } catch (error: any) {
-            showToast(t(app === 'OpenCode' ? 'proxy.opencode_sync.toast.sync_error' : 'proxy.cli_sync.toast.sync_error', { name: app, error: error.toString(), defaultValue: `Sync failed: ${error.toString()}` }), 'error');
+            const msgKey = isWebMode ? 'proxy.cli_sync.toast.export_error' : (app === 'OpenCode' ? 'proxy.opencode_sync.toast.sync_error' : 'proxy.cli_sync.toast.sync_error');
+            showToast(t(msgKey, { name: app, error: error.toString(), defaultValue: `${isWebMode ? 'Export' : 'Sync'} failed: ${error.toString()}` }), 'error');
         } finally {
             setSyncing(prev => ({ ...prev, [app]: false }));
         }
@@ -278,6 +356,10 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                                         <Loader2 size={10} className="animate-spin" />
                                         {t('proxy.cli_sync.status.detecting')}
                                     </div>
+                                ) : isWebMode ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-bold whitespace-nowrap">
+                                        {t('proxy.cli_sync.status.export_mode', { defaultValue: 'Export Mode' })}
+                                    </span>
                                 ) : status?.installed ? (
                                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-bold whitespace-nowrap">
                                         {t('proxy.cli_sync.status.installed', { version: status.version })}
@@ -291,18 +373,24 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         </div>
                     </div>
 
-                    {/* Show Sync Status if installed OR if it's OpenCode (which we now allow configuring even if not installed) */}
-                    {!isAppLoading && (status?.installed || app === 'OpenCode' && status?.current_base_url) && (
+                    {/* Show Sync/Export Status */}
+                    {!isAppLoading && (isWebMode || status?.installed || app === 'OpenCode' && status?.current_base_url) && (
                         <div className={cn(
                             "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wide transition-all h-6 shrink-0 whitespace-nowrap shadow-sm",
-                            status.is_synced
+                            status?.is_synced
                                 ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white"
                                 : "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-500 border border-amber-200/50 dark:border-amber-800/30"
                         )}>
-                            {status.is_synced ? (
-                                <><CheckCircle2 size={12} className="shrink-0" /> {t('proxy.cli_sync.status.synced', { defaultValue: '已同步' })}</>
+                            {status?.is_synced ? (
+                                <><CheckCircle2 size={12} className="shrink-0" /> {isWebMode
+                                    ? t('proxy.cli_sync.status.exported', { defaultValue: 'Exported' })
+                                    : t('proxy.cli_sync.status.synced', { defaultValue: '已同步' })
+                                }</>
                             ) : (
-                                <><AlertCircle size={12} className="shrink-0" /> {t('proxy.cli_sync.status.not_synced', { defaultValue: '未同步' })}</>
+                                <><AlertCircle size={12} className="shrink-0" /> {isWebMode
+                                    ? t('proxy.cli_sync.status.not_exported', { defaultValue: 'Not Exported' })
+                                    : t('proxy.cli_sync.status.not_synced', { defaultValue: '未同步' })
+                                }</>
                             )}
                         </div>
                     )}
@@ -311,10 +399,18 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 <div className="mt-auto space-y-3">
                     <div className="p-2.5 bg-gray-50/80 dark:bg-gray-900/40 rounded-lg border border-dashed border-gray-200 dark:border-white/10">
                         <div className="flex justify-between items-start mb-1">
-                            <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider">{t('proxy.cli_sync.status.current_base_url')}</div>
+                            <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider">
+                                {isWebMode
+                                    ? t('proxy.cli_sync.status.export_dir', { defaultValue: 'Export Directory' })
+                                    : t('proxy.cli_sync.status.current_base_url')
+                                }
+                            </div>
                         </div>
                         <div className="text-[10px] font-mono truncate text-gray-500 dark:text-gray-400 italic">
-                            {status?.current_base_url || '---'}
+                            {isWebMode
+                                ? (exportStatuses[app]?.export_dir || t('proxy.cli_sync.status.not_exported_yet', { defaultValue: 'Not exported yet' }))
+                                : (status?.current_base_url || '---')
+                            }
                         </div>
                     </div>
 
@@ -334,8 +430,8 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         </div>
                     )}
 
-                    {/* OpenCode 独有的账号同步选项 - Allow even if not installed */}
-                    {app === 'OpenCode' && (
+                    {/* OpenCode 独有的账号同步选项 - Allow even if not installed, hide in web mode */}
+                    {app === 'OpenCode' && !isWebMode && (
                         <div className="flex items-center gap-2 p-2 bg-gray-50/50 dark:bg-gray-900/20 rounded-lg">
                             <input
                                 type="checkbox"
@@ -351,9 +447,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     )}
 
                     <div className="flex items-center gap-2">
-                        {(status?.installed || app === 'OpenCode') && (
+                        {/* View/Restore/Clear buttons — desktop mode only */}
+                        {!isWebMode && (status?.installed || app === 'OpenCode') && (
                             <>
-                                {/* 对于 OpenCode，如果未同步，则不显示查看按钮（因为文件尚未生成，后端会报错） */}
                                 {(app !== 'OpenCode' || status?.is_synced) && (
                                     <button
                                         onClick={() => handleViewConfig(app)}
@@ -370,7 +466,6 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                                 >
                                     <RotateCcw size={14} />
                                 </button>
-                                {/* OpenCode 独有的 Clear 按钮 */}
                                 {app === 'OpenCode' && (
                                     <button
                                         onClick={() => handleClear(app)}
@@ -384,7 +479,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         )}
                         <button
                             onClick={() => handleSync(app)}
-                            disabled={(app !== 'OpenCode' && !status?.installed) || isAppSyncing || isAppLoading}
+                            disabled={(!isWebMode && app !== 'OpenCode' && !status?.installed) || isAppSyncing || isAppLoading}
                             className={cn(
                                 "btn btn-sm flex-1 gap-2 rounded-xl transition-all font-bold shadow-sm",
                                 status?.is_synced
@@ -397,7 +492,10 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                             ) : (
                                 <RefreshCw size={14} className={cn(isAppLoading && "animate-spin-once")} />
                             )}
-                            {t('proxy.cli_sync.btn_sync')}
+                            {isWebMode
+                                ? t('proxy.cli_sync.btn_export', { defaultValue: 'Export' })
+                                : t('proxy.cli_sync.btn_sync')
+                            }
                         </button>
                     </div>
                 </div>
@@ -415,7 +513,10 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     </span>
                 </div>
                 <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
-                    {t('proxy.cli_sync.subtitle')}
+                    {isWebMode
+                        ? t('proxy.cli_sync.subtitle_web', { defaultValue: 'Generate drop-in configs for your CLI tools' })
+                        : t('proxy.cli_sync.subtitle')
+                    }
                 </p>
             </div>
 
@@ -500,14 +601,25 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 isDestructive={true}
             />
 
-            {/* 同步配置确认弹窗 (Issue #756) */}
+            {/* Sync/Export confirm dialog */}
             <ModalDialog
                 isOpen={!!syncConfirmApp}
-                title={t('proxy.cli_sync.sync_confirm_title')}
-                message={syncConfirmApp ? t('proxy.cli_sync.sync_confirm_message', { name: syncConfirmApp }) : ''}
+                title={isWebMode
+                    ? t('proxy.cli_sync.export_confirm_title', { defaultValue: 'Export Configuration' })
+                    : t('proxy.cli_sync.sync_confirm_title')
+                }
+                message={syncConfirmApp
+                    ? (isWebMode
+                        ? t('proxy.cli_sync.export_confirm_message', {
+                            name: syncConfirmApp,
+                            defaultValue: `Export ${syncConfirmApp} config files to the one-click-sync directory?`
+                        })
+                        : t('proxy.cli_sync.sync_confirm_message', { name: syncConfirmApp }))
+                    : ''
+                }
                 onConfirm={executeSync}
                 onCancel={() => setSyncConfirmApp(null)}
-                isDestructive={true}
+                isDestructive={!isWebMode}
             />
 
             {/* Clear 确认弹窗 - 仅 OpenCode */}
