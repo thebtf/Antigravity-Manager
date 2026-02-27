@@ -376,8 +376,14 @@ fn do_export_droid_config(proxy_url: &str, api_key: &str) -> Result<ExportResult
 
     let config_file = export_dir.join(DROID_CONFIG_FILE);
     let tmp_path = config_file.with_extension("tmp");
-    fs::write(&tmp_path, serde_json::to_string_pretty(&config).unwrap())
+    let config_content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize Droid config: {}", e))?;
+    fs::write(&tmp_path, config_content)
         .map_err(|e| format!("Failed to write export temp file: {}", e))?;
+    if config_file.exists() {
+        fs::remove_file(&config_file)
+            .map_err(|e| format!("Failed to remove existing export config file: {}", e))?;
+    }
     fs::rename(&tmp_path, &config_file)
         .map_err(|e| format!("Failed to rename export config file: {}", e))?;
 

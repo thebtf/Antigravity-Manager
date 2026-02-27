@@ -445,27 +445,39 @@ fn generate_file_content(
             } else if file_name == "settings.json" || file_name == "config.json" {
                 let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
                 if json.as_object().is_none() { json = serde_json::json!({}); }
-                let sec = json.as_object_mut().unwrap().entry("security").or_insert(serde_json::json!({}));
-                let auth = sec.as_object_mut().unwrap().entry("auth").or_insert(serde_json::json!({}));
-                if let Some(auth_obj) = auth.as_object_mut() {
-                    auth_obj.insert("selectedType".to_string(), Value::String("gemini-api-key".to_string()));
+                if let Some(root_obj) = json.as_object_mut() {
+                    let sec = root_obj.entry("security").or_insert_with(|| serde_json::json!({}));
+                    if !sec.is_object() { *sec = serde_json::json!({}); }
+                    if let Some(sec_obj) = sec.as_object_mut() {
+                        let auth = sec_obj.entry("auth").or_insert_with(|| serde_json::json!({}));
+                        if !auth.is_object() { *auth = serde_json::json!({}); }
+                        if let Some(auth_obj) = auth.as_object_mut() {
+                            auth_obj.insert("selectedType".to_string(), Value::String("gemini-api-key".to_string()));
+                        }
+                    }
                 }
-                content = serde_json::to_string_pretty(&json).unwrap();
+                content = serde_json::to_string_pretty(&json).unwrap_or_default();
             }
         }
         CliApp::OpenCode => {
             if file_name == "config.json" {
                 let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
                 if json.as_object().is_none() { json = serde_json::json!({}); }
-                let providers = json.as_object_mut().unwrap().entry("providers").or_insert(serde_json::json!({}));
-                let openai = providers.as_object_mut().unwrap().entry("openai").or_insert(serde_json::json!({}));
-                if let Some(openai_obj) = openai.as_object_mut() {
-                    openai_obj.insert("baseURL".to_string(), Value::String(proxy_url.to_string()));
-                    if !api_key.is_empty() {
-                        openai_obj.insert("apiKey".to_string(), Value::String(api_key.to_string()));
+                if let Some(root_obj) = json.as_object_mut() {
+                    let providers = root_obj.entry("providers").or_insert_with(|| serde_json::json!({}));
+                    if !providers.is_object() { *providers = serde_json::json!({}); }
+                    if let Some(providers_obj) = providers.as_object_mut() {
+                        let openai = providers_obj.entry("openai").or_insert_with(|| serde_json::json!({}));
+                        if !openai.is_object() { *openai = serde_json::json!({}); }
+                        if let Some(openai_obj) = openai.as_object_mut() {
+                            openai_obj.insert("baseURL".to_string(), Value::String(proxy_url.to_string()));
+                            if !api_key.is_empty() {
+                                openai_obj.insert("apiKey".to_string(), Value::String(api_key.to_string()));
+                            }
+                        }
                     }
                 }
-                content = serde_json::to_string_pretty(&json).unwrap();
+                content = serde_json::to_string_pretty(&json).unwrap_or_default();
             }
         }
     }
@@ -551,8 +563,11 @@ pub fn export_config(
         let content = generate_file_content(app, &file.name, "", proxy_url, api_key, model);
 
         let export_path = app_dir.join(&file.name);
-        fs::write(&export_path, &content)
-            .map_err(|e| format!("Failed to write export file {}: {}", file.name, e))?;
+        let tmp_path = export_path.with_extension("tmp");
+        fs::write(&tmp_path, &content)
+            .map_err(|e| format!("Failed to write temp export file {}: {}", file.name, e))?;
+        fs::rename(&tmp_path, &export_path)
+            .map_err(|e| format!("Failed to finalize export file {}: {}", file.name, e))?;
 
         exported.push(ExportedFile {
             name: file.name.clone(),
@@ -576,12 +591,10 @@ pub fn get_export_status(app: &CliApp) -> Result<ExportStatus, String> {
 
     let files = app.config_files();
     let mut exported_files = Vec::new();
-    let mut any_exported = false;
 
     for file in &files {
         let export_path = app_dir.join(&file.name);
         if export_path.exists() {
-            any_exported = true;
             exported_files.push(ExportedFile {
                 name: file.name.clone(),
                 export_path: export_path.to_string_lossy().to_string(),
@@ -590,8 +603,10 @@ pub fn get_export_status(app: &CliApp) -> Result<ExportStatus, String> {
         }
     }
 
+    let fully_exported = !exported_files.is_empty() && exported_files.len() == files.len();
+
     Ok(ExportStatus {
-        exported: any_exported,
+        exported: fully_exported,
         export_dir: app_dir.to_string_lossy().to_string(),
         files: exported_files,
     })
