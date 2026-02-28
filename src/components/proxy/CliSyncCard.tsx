@@ -444,7 +444,7 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                                     <span className="text-[9px] font-bold text-gray-400 dark:text-gray-500 w-12 text-right uppercase">{tier}</span>
                                     <GroupedSelect
                                         value={claudeModels[tier]}
-                                        onChange={(val) => setClaudeModels(prev => ({ ...prev, [tier]: val }))}
+                                        onChange={(val) => setClaudeModels((prev: typeof claudeModels) => ({ ...prev, [tier]: val }))}
                                         options={modelOptions}
                                         className="flex-1 !h-7 !text-[10px] !rounded-lg"
                                         allowCustomInput={true}
