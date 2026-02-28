@@ -3,6 +3,7 @@ name: ghcr-build
 on:
   push:
     branches:
+      - 'main'
       - 'fix/**'
       - 'feat/**'
   workflow_dispatch:
