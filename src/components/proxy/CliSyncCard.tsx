@@ -78,11 +78,16 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     const [syncAccounts, setSyncAccounts] = useState(false);
     const [droidSyncModal, setDroidSyncModal] = useState(false);
     const [selectedModels, setSelectedModels] = useState<Record<CliAppType, string>>({
-        Claude: 'claude-3-5-sonnet-latest',
+        Claude: '',  // Claude uses tier selectors instead
         Codex: 'gpt-4o',
         Gemini: 'gemini-1.5-pro',
         OpenCode: '',
         Droid: ''
+    });
+    const [claudeModels, setClaudeModels] = useState({
+        opus: 'claude-opus-4-6',
+        sonnet: 'claude-sonnet-4-6',
+        haiku: 'claude-haiku-4-5-20251001'
     });
     const [viewingConfig, setViewingConfig] = useState<{
         app: CliAppType,
@@ -218,7 +223,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                     params = { proxyUrl: formattedUrl, apiKey };
                 } else {
                     command = 'export_cli_config';
-                    params = { appType: app, proxyUrl: formattedUrl, apiKey, model: selectedModels[app] };
+                    params = app === 'Claude'
+                        ? { appType: app, proxyUrl: formattedUrl, apiKey, claudeModels }
+                        : { appType: app, proxyUrl: formattedUrl, apiKey, model: selectedModels[app] };
                 }
 
                 const result = await invoke<{ export_dir: string; files: { name: string }[] }>(command, params);
@@ -236,7 +243,9 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                 const command = app === 'OpenCode' ? 'execute_opencode_sync' : 'execute_cli_sync';
                 const params = app === 'OpenCode'
                     ? { proxyUrl: formattedUrl, apiKey: apiKey, syncAccounts: syncAccounts }
-                    : { appType: app, proxyUrl: formattedUrl, apiKey: apiKey, model: selectedModels[app] };
+                    : app === 'Claude'
+                        ? { appType: app, proxyUrl: formattedUrl, apiKey: apiKey, claudeModels }
+                        : { appType: app, proxyUrl: formattedUrl, apiKey: apiKey, model: selectedModels[app] };
 
                 await invoke(command, params);
                 showToast(t(app === 'OpenCode' ? 'proxy.opencode_sync.toast.sync_success' : 'proxy.cli_sync.toast.sync_success', { name: app, defaultValue: `${app} synced successfully` }), 'success');
@@ -414,8 +423,29 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                         </div>
                     </div>
 
-                    {/* Claude, Codex, Gemini 的模型选择 */}
-                    {(status?.installed || app === 'OpenCode') && (app === 'Claude' || app === 'Codex' || app === 'Gemini') && (
+                    {/* Claude: 3-tier model selection (opus/sonnet/haiku) */}
+                    {(status?.installed || isWebMode) && app === 'Claude' && (
+                        <div className="space-y-1.5">
+                            <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider px-1">
+                                {t('proxy.cli_sync.model_tiers', { defaultValue: 'Model Tiers' })}
+                            </div>
+                            {(['opus', 'sonnet', 'haiku'] as const).map((tier) => (
+                                <div key={tier} className="flex items-center gap-2">
+                                    <span className="text-[9px] font-bold text-gray-400 dark:text-gray-500 w-12 text-right uppercase">{tier}</span>
+                                    <GroupedSelect
+                                        value={claudeModels[tier]}
+                                        onChange={(val) => setClaudeModels(prev => ({ ...prev, [tier]: val }))}
+                                        options={modelOptions}
+                                        className="flex-1 !h-7 !text-[10px] !rounded-lg"
+                                        allowCustomInput={true}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Codex, Gemini: single model selection */}
+                    {(status?.installed || isWebMode) && (app === 'Codex' || app === 'Gemini') && (
                         <div className="space-y-1">
                             <div className="text-[9px] text-gray-400 dark:text-gray-500 uppercase font-bold tracking-wider px-1">
                                 {t('proxy.cli_sync.model_select', { defaultValue: 'Select Model' })}
@@ -427,6 +457,29 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
                                 className="w-full !h-8 !text-[11px] !rounded-lg"
                                 allowCustomInput={true}
                             />
+                        </div>
+                    )}
+
+                    {/* Web mode: export usage instructions */}
+                    {isWebMode && exportStatuses[app]?.exported && (
+                        <div className="p-2 bg-blue-50/80 dark:bg-blue-900/20 rounded-lg border border-blue-200/50 dark:border-blue-800/30">
+                            <div className="text-[9px] text-blue-600 dark:text-blue-400 leading-relaxed">
+                                {app === 'Claude' && t('proxy.cli_sync.export_hint_claude', {
+                                    defaultValue: 'Merge the exported env section into your existing ~/.claude/settings.json'
+                                })}
+                                {app === 'Codex' && t('proxy.cli_sync.export_hint_codex', {
+                                    defaultValue: 'Copy exported files to ~/.codex/'
+                                })}
+                                {app === 'Gemini' && t('proxy.cli_sync.export_hint_gemini', {
+                                    defaultValue: 'Copy exported settings.json to ~/.gemini/'
+                                })}
+                                {app === 'OpenCode' && t('proxy.cli_sync.export_hint_opencode', {
+                                    defaultValue: 'Copy exported config.json to ~/.opencode/'
+                                })}
+                                {app === 'Droid' && t('proxy.cli_sync.export_hint_droid', {
+                                    defaultValue: 'Copy exported settings.json to ~/.factory/'
+                                })}
+                            </div>
                         </div>
                     )}
 

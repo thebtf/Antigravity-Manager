@@ -2772,13 +2772,14 @@ struct CliSyncRequest {
     app_type: crate::proxy::cli_sync::CliApp,
     proxy_url: String,
     api_key: String,
-    pub model: Option<String>,
+    model: Option<String>,
+    claude_models: Option<crate::proxy::cli_sync::ClaudeModelTiers>,
 }
 
 async fn admin_execute_cli_sync(
     Json(payload): Json<CliSyncRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::proxy::cli_sync::execute_cli_sync(payload.app_type, payload.proxy_url, payload.api_key, payload.model)
+    crate::proxy::cli_sync::execute_cli_sync(payload.app_type, payload.proxy_url, payload.api_key, payload.model, payload.claude_models)
         .await
         .map(|_| StatusCode::OK)
         .map_err(|e| {
@@ -2835,7 +2836,7 @@ async fn admin_get_cli_config_content(
 async fn admin_export_cli_config(
     Json(payload): Json<CliSyncRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::proxy::cli_sync::export_cli_config(payload.app_type, payload.proxy_url, payload.api_key, payload.model)
+    crate::proxy::cli_sync::export_cli_config(payload.app_type, payload.proxy_url, payload.api_key, payload.model, payload.claude_models)
         .await
         .map(Json)
         .map_err(|e| {

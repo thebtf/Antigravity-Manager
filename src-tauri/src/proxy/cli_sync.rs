@@ -10,6 +10,15 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// Model tier configuration for Claude Code.
+/// Claude Code uses separate models for opus/sonnet/haiku tiers.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ClaudeModelTiers {
+    pub opus: Option<String>,
+    pub sonnet: Option<String>,
+    pub haiku: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum CliApp {
     Claude,
@@ -335,6 +344,7 @@ fn generate_file_content(
     proxy_url: &str,
     api_key: &str,
     model: Option<&str>,
+    claude_models: Option<&ClaudeModelTiers>,
 ) -> String {
     let mut content = existing_content.to_string();
 
@@ -354,26 +364,55 @@ fn generate_file_content(
                     env_obj.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(proxy_url.to_string()));
                     if !api_key.is_empty() {
                         env_obj.insert("ANTHROPIC_API_KEY".to_string(), Value::String(api_key.to_string()));
-
-                        // [FIX] 避免冲突：如果存在则移除 ANTHROPIC_AUTH_TOKEN
+                        // Remove conflicting auth token
                         env_obj.remove("ANTHROPIC_AUTH_TOKEN");
+                    } else {
+                        env_obj.remove("ANTHROPIC_API_KEY");
+                    }
 
-                        // [FIX] 清理可能来自其他 Provider 的模型覆盖设置
-                        env_obj.remove("ANTHROPIC_MODEL");
-                        env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+                    // Set Claude Code model tier env vars
+                    if let Some(tiers) = claude_models {
+                        // Set or clear each tier: None = remove stale value
+                        if let Some(ref opus) = tiers.opus {
+                            env_obj.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), Value::String(opus.clone()));
+                        } else {
+                            env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+                        }
+                        if let Some(ref sonnet) = tiers.sonnet {
+                            env_obj.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), Value::String(sonnet.clone()));
+                            env_obj.insert("ANTHROPIC_MODEL".to_string(), Value::String(sonnet.clone()));
+                        } else {
+                            env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+                            env_obj.remove("ANTHROPIC_MODEL");
+                        }
+                        if let Some(ref haiku) = tiers.haiku {
+                            env_obj.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), Value::String(haiku.clone()));
+                            env_obj.insert("CLAUDE_CODE_SUBAGENT_MODEL".to_string(), Value::String(haiku.clone()));
+                        } else {
+                            env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+                            env_obj.remove("CLAUDE_CODE_SUBAGENT_MODEL");
+                        }
+                    } else if let Some(m) = model {
+                        // Fallback: single model — clean all tier vars first
                         env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
                         env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
-                    } else {
-                        // 如果 API Key 为空，则移除该键，避免设置为空字符串
-                        env_obj.remove("ANTHROPIC_API_KEY");
+                        env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+                        env_obj.remove("CLAUDE_CODE_SUBAGENT_MODEL");
+                        env_obj.insert("ANTHROPIC_MODEL".to_string(), Value::String(m.to_string()));
                     }
                 }
 
-                if let Some(m) = model {
-                    // 注意：Claude Code 的官方配置中，当前选定模型放在根节点的 model 字段
+                // Root-level model field (Claude Code's own config)
+                if let Some(tiers) = claude_models {
+                    if let Some(ref sonnet) = tiers.sonnet {
+                        json.as_object_mut().unwrap().insert("model".to_string(), Value::String(sonnet.clone()));
+                    }
+                } else if let Some(m) = model {
                     json.as_object_mut().unwrap().insert("model".to_string(), Value::String(m.to_string()));
                 }
-                content = serde_json::to_string_pretty(&json).unwrap();
+                content = serde_json::to_string_pretty(&json)
+                    .map_err(|e| format!("Failed to serialize Claude config: {}", e))
+                    .unwrap_or_else(|_| content);
             }
         }
         CliApp::Codex => {
@@ -486,7 +525,13 @@ fn generate_file_content(
 }
 
 /// 执行同步逻辑
-pub fn sync_config(app: &CliApp, proxy_url: &str, api_key: &str, model: Option<&str>) -> Result<(), String> {
+pub fn sync_config(
+    app: &CliApp,
+    proxy_url: &str,
+    api_key: &str,
+    model: Option<&str>,
+    claude_models: Option<&ClaudeModelTiers>,
+) -> Result<(), String> {
     let files = app.config_files();
 
     for file in &files {
@@ -521,12 +566,18 @@ pub fn sync_config(app: &CliApp, proxy_url: &str, api_key: &str, model: Option<&
             String::new()
         };
 
-        let content = generate_file_content(app, &file.name, &existing_content, proxy_url, api_key, model);
+        let content = generate_file_content(app, &file.name, &existing_content, proxy_url, api_key, model, claude_models);
 
-        // 使用临时文件原子写入
+        // Atomic write via temp file
         let tmp_path = file.path.with_extension("tmp");
-        fs::write(&tmp_path, &content).map_err(|e| format!("写入临时文件失败: {}", e))?;
-        fs::rename(&tmp_path, &file.path).map_err(|e| format!("重命名配置文件失败: {}", e))?;
+        fs::write(&tmp_path, &content).map_err(|e| format!("Failed to write temp file: {}", e))?;
+        // On Windows, rename fails if target exists — remove first
+        #[cfg(target_os = "windows")]
+        if file.path.exists() {
+            fs::remove_file(&file.path)
+                .map_err(|e| format!("Failed to remove existing config: {}", e))?;
+        }
+        fs::rename(&tmp_path, &file.path).map_err(|e| format!("Failed to rename config file: {}", e))?;
     }
 
     Ok(())
@@ -540,6 +591,7 @@ pub fn export_config(
     proxy_url: &str,
     api_key: &str,
     model: Option<&str>,
+    claude_models: Option<&ClaudeModelTiers>,
 ) -> Result<ExportResult, String> {
     let data_dir = crate::modules::account::get_data_dir()?;
     let export_base = data_dir.join("one-click-sync");
@@ -560,7 +612,7 @@ pub fn export_config(
         }
 
         // Generate fresh content (empty existing = fresh config)
-        let content = generate_file_content(app, &file.name, "", proxy_url, api_key, model);
+        let content = generate_file_content(app, &file.name, "", proxy_url, api_key, model, claude_models);
 
         let export_path = app_dir.join(&file.name);
         let tmp_path = export_path.with_extension("tmp");
@@ -634,8 +686,14 @@ pub async fn get_cli_sync_status(app_type: CliApp, proxy_url: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn execute_cli_sync(app_type: CliApp, proxy_url: String, api_key: String, model: Option<String>) -> Result<(), String> {
-    sync_config(&app_type, &proxy_url, &api_key, model.as_deref())
+pub async fn execute_cli_sync(
+    app_type: CliApp,
+    proxy_url: String,
+    api_key: String,
+    model: Option<String>,
+    claude_models: Option<ClaudeModelTiers>,
+) -> Result<(), String> {
+    sync_config(&app_type, &proxy_url, &api_key, model.as_deref(), claude_models.as_ref())
 }
 
 #[tauri::command]
@@ -663,7 +721,7 @@ pub async fn execute_cli_restore(app_type: CliApp) -> Result<(), String> {
     // 如果没有备份，则执行原来的逻辑：恢复为默认配置
     let default_url = app_type.default_url();
     // 恢复默认时清空 API Key，让用户重新授权或使用官方 Key
-    sync_config(&app_type, default_url, "", None)
+    sync_config(&app_type, default_url, "", None, None)
 }
 
 #[tauri::command]
@@ -687,8 +745,9 @@ pub async fn export_cli_config(
     proxy_url: String,
     api_key: String,
     model: Option<String>,
+    claude_models: Option<ClaudeModelTiers>,
 ) -> Result<ExportResult, String> {
-    export_config(&app_type, &proxy_url, &api_key, model.as_deref())
+    export_config(&app_type, &proxy_url, &api_key, model.as_deref(), claude_models.as_ref())
 }
 
 #[tauri::command]
