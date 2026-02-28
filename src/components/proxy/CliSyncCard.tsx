@@ -77,17 +77,19 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     });
     const [syncAccounts, setSyncAccounts] = useState(false);
     const [droidSyncModal, setDroidSyncModal] = useState(false);
-    const [selectedModels, setSelectedModels] = useState<Record<CliAppType, string>>({
-        Claude: '',  // Claude uses tier selectors instead
-        Codex: 'gpt-4o',
-        Gemini: 'gemini-1.5-pro',
-        OpenCode: '',
-        Droid: ''
+    const [selectedModels, setSelectedModels] = useState<Record<CliAppType, string>>(() => {
+        try {
+            const saved = localStorage.getItem('antigravity_cli_sync_models');
+            if (saved) return { Claude: '', Codex: 'gpt-4o', Gemini: 'gemini-1.5-pro', OpenCode: '', Droid: '', ...JSON.parse(saved) };
+        } catch { /* ignore */ }
+        return { Claude: '', Codex: 'gpt-4o', Gemini: 'gemini-1.5-pro', OpenCode: '', Droid: '' };
     });
-    const [claudeModels, setClaudeModels] = useState({
-        opus: 'claude-opus-4-6',
-        sonnet: 'claude-sonnet-4-6',
-        haiku: 'claude-haiku-4-5-20251001'
+    const [claudeModels, setClaudeModels] = useState(() => {
+        try {
+            const saved = localStorage.getItem('antigravity_cli_sync_claude_tiers');
+            if (saved) return { opus: 'claude-opus-4-6', sonnet: 'claude-sonnet-4-6', haiku: 'claude-haiku-4-5-20251001', ...JSON.parse(saved) };
+        } catch { /* ignore */ }
+        return { opus: 'claude-opus-4-6', sonnet: 'claude-sonnet-4-6', haiku: 'claude-haiku-4-5-20251001' };
     });
     const [viewingConfig, setViewingConfig] = useState<{
         app: CliAppType,
@@ -102,6 +104,14 @@ export const CliSyncCard = ({ proxyUrl, apiKey, className }: CliSyncCardProps) =
     const [exportStatuses, setExportStatuses] = useState<Record<CliAppType, ExportStatus | null>>({
         Claude: null, Codex: null, Gemini: null, OpenCode: null, Droid: null
     });
+
+    useEffect(() => {
+        localStorage.setItem('antigravity_cli_sync_models', JSON.stringify(selectedModels));
+    }, [selectedModels]);
+
+    useEffect(() => {
+        localStorage.setItem('antigravity_cli_sync_claude_tiers', JSON.stringify(claudeModels));
+    }, [claudeModels]);
 
     const { models: proxyModels } = useProxyModels();
 
