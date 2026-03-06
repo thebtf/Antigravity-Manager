@@ -1620,17 +1620,15 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     let tasks: Vec<_> = accounts
         .into_iter()
         .filter(|account| {
-            // [MOD] Now we allow refreshing disabled and proxy_disabled accounts
-            // to support forced re-sync from UI. 
-            // Only strictly skip forbidden accounts if necessary, but even those 
-            // might want a retry to see if they are unbanned.
+            // Allow refreshing ALL accounts including forbidden (403) ones.
+            // This lets users check if a shadow-ban has been lifted.
+            // If Google returns 200, is_forbidden will be cleared on quota update.
             if let Some(ref q) = account.quota {
                 if q.is_forbidden {
                     crate::modules::logger::log_info(&format!(
-                        "  - Skipping {} (Forbidden)",
+                        "  - Retrying forbidden account {} (checking if ban lifted)",
                         account.email
                     ));
-                    return false;
                 }
             }
             true
