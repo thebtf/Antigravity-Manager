@@ -118,7 +118,7 @@ pub async fn handle_warmup(
             ".", "1", "yes", "thanks", "help",
         ];
         let prompt = warmup_prompts[rand::thread_rng().gen_range(0..warmup_prompts.len())];
-        let max_tokens = rand::thread_rng().gen_range(1..=5i32);
+        let max_tokens = rand::thread_rng().gen_range(1..=5u32);
 
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
             model: req.model.clone(),

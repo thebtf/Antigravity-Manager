@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tokio::time::{self, Duration};
+use tokio::time::Duration;
 use crate::modules::{config, logger, quota, account};
 use crate::models::Account;
 use std::path::PathBuf;
