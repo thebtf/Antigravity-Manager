@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+use crate::proxy::common::rate_limiter::AccountRequestTracker;
 use crate::proxy::rate_limit::RateLimitTracker;
 use crate::proxy::sticky_config::StickySessionConfig;
 
@@ -44,6 +45,7 @@ pub struct TokenManager {
     last_used_account: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
     data_dir: PathBuf,
     rate_limit_tracker: Arc<RateLimitTracker>, // 新增: 限流跟踪器
+    account_rpm_tracker: Arc<AccountRequestTracker>, // [Phase2] Proactive per-account RPM cap
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>, // 新增：调度配置
     session_accounts: Arc<DashMap<String, String>>, // 新增：会话与账号映射 (SessionID -> AccountID)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
@@ -63,6 +65,7 @@ impl TokenManager {
             last_used_account: Arc::new(tokio::sync::Mutex::new(None)),
             data_dir,
             rate_limit_tracker: Arc::new(RateLimitTracker::new()),
+            account_rpm_tracker: Arc::new(AccountRequestTracker::new()),
             sticky_config: Arc::new(tokio::sync::RwLock::new(StickySessionConfig::default())),
             session_accounts: Arc::new(DashMap::new()),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)), // [FIX #820]
@@ -1124,9 +1127,17 @@ impl TokenManager {
         use crate::proxy::sticky_config::SchedulingMode;
 
         // 【新增】检查配额保护是否启用（如果关闭，则忽略 protected_models 检查）
-        let quota_protection_enabled = crate::modules::config::load_app_config()
+        let app_config = crate::modules::config::load_app_config().ok();
+        let quota_protection_enabled = app_config
+            .as_ref()
             .map(|cfg| cfg.quota_protection.enabled)
             .unwrap_or(false);
+
+        // [Phase2] Proactive RPM limit config
+        let (rpm_limit_enabled, rpm_limit) = app_config
+            .as_ref()
+            .map(|cfg| (cfg.proxy.rpm_limit_enabled, cfg.proxy.rpm_limit))
+            .unwrap_or((true, 10));
 
         // ===== [FIX #820] 固定账号模式：优先使用指定账号 =====
         let preferred_id = self.preferred_account_id.read().await.clone();
@@ -1381,12 +1392,20 @@ impl TokenManager {
 
                 // 若无锁定，则使用 P2C 选择账号 (避免热点问题)
                 if target_token.is_none() {
-                    // 先过滤出未限流的账号
+                    // 先过滤出未限流的账号 (reactive 429 + proactive RPM cap)
                     let mut non_limited: Vec<ProxyToken> = Vec::new();
                     for t in &tokens_snapshot {
-                        if !self.is_rate_limited(&t.account_id, Some(&normalized_target)).await {
-                            non_limited.push(t.clone());
+                        if self.is_rate_limited(&t.account_id, Some(&normalized_target)).await {
+                            continue;
                         }
+                        if rpm_limit_enabled && self.account_rpm_tracker.is_over_limit(&t.account_id, rpm_limit) {
+                            tracing::debug!(
+                                "[RPM-Cap] Account {} at RPM limit ({}), skipping in P2C",
+                                t.email, rpm_limit
+                            );
+                            continue;
+                        }
+                        non_limited.push(t.clone());
                     }
 
                     if let Some(selected) = self.select_with_p2c(
@@ -1416,12 +1435,20 @@ impl TokenManager {
                     total
                 );
 
-                // 先过滤出未限流的账号
+                // 先过滤出未限流的账号 (reactive 429 + proactive RPM cap)
                 let mut non_limited: Vec<ProxyToken> = Vec::new();
                 for t in &tokens_snapshot {
-                    if !self.is_rate_limited(&t.account_id, Some(&normalized_target)).await {
-                        non_limited.push(t.clone());
+                    if self.is_rate_limited(&t.account_id, Some(&normalized_target)).await {
+                        continue;
                     }
+                    if rpm_limit_enabled && self.account_rpm_tracker.is_over_limit(&t.account_id, rpm_limit) {
+                        tracing::debug!(
+                            "[RPM-Cap] Account {} at RPM limit ({}), skipping in P2C",
+                            t.email, rpm_limit
+                        );
+                        continue;
+                    }
+                    non_limited.push(t.clone());
                 }
 
                 if let Some(selected) = self.select_with_p2c(
@@ -1633,6 +1660,16 @@ impl TokenManager {
                         *last_used = Some((new_account_id, new_time));
                     }
                 }
+            }
+
+            // [Phase2] Record request for proactive RPM tracking
+            if rpm_limit_enabled {
+                self.account_rpm_tracker.record_request(&token.account_id);
+                tracing::trace!(
+                    "[RPM-Cap] Recorded request for {}, current RPM: {}",
+                    token.email,
+                    self.account_rpm_tracker.get_rpm(&token.account_id)
+                );
             }
 
             return Ok((token.access_token, project_id, token.email, token.account_id, 0));

@@ -555,6 +555,15 @@ pub struct ProxyConfig {
     /// 代理池配置
     #[serde(default)]
     pub proxy_pool: ProxyPoolConfig,
+
+    /// Per-account proactive RPM limit (requests per 60s sliding window).
+    /// Accounts exceeding this limit are skipped during P2C selection.
+    #[serde(default = "default_rpm_limit")]
+    pub rpm_limit: u32,
+
+    /// Whether proactive RPM limiting is enabled.
+    #[serde(default = "default_rpm_limit_enabled")]
+    pub rpm_limit_enabled: bool,
 }
 
 /// 上游代理配置
@@ -592,12 +601,22 @@ impl Default for ProxyConfig {
             global_system_prompt: GlobalSystemPromptConfig::default(),
             proxy_pool: ProxyPoolConfig::default(),
             image_thinking_mode: None,
+            rpm_limit: default_rpm_limit(),
+            rpm_limit_enabled: default_rpm_limit_enabled(),
         }
     }
 }
 
 fn default_request_timeout() -> u64 {
     120 // 默认 120 秒,原来 60 秒太短
+}
+
+fn default_rpm_limit() -> u32 {
+    10
+}
+
+fn default_rpm_limit_enabled() -> bool {
+    true
 }
 
 fn default_zai_base_url() -> String {
