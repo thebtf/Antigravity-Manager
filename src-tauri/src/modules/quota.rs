@@ -480,10 +480,11 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
         if !warmup_items.is_empty() {
             let total_before = warmup_items.len();
             
-            // Filter out models warmed up within 4 hours
+            // Filter out models warmed up within jittered cooldown (3.5-4.5h)
             warmup_items.retain(|(_, email, model, _, _, _)| {
                 let history_key = format!("{}:{}:100", email, model);
-                !crate::modules::scheduler::check_cooldown(&history_key, 14400)
+                let cooldown: i64 = {use rand::Rng; rand::thread_rng().gen_range(12600..=16200)};
+                !crate::modules::scheduler::check_cooldown(&history_key, cooldown)
             });
             
             if warmup_items.is_empty() {
@@ -542,7 +543,9 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                     }
                     
                     if batch_idx < (warmup_items.len() + batch_size - 1) / batch_size - 1 {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        // Random delay between batches: 3-8s instead of fixed 2s
+                        let delay_ms = {use rand::Rng; rand::thread_rng().gen_range(3000..=8000u64)};
+                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                     }
                 }
                 
@@ -619,7 +622,9 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
                 let now_ts = chrono::Utc::now().timestamp();
                 crate::modules::scheduler::record_warmup_history(&history_key, now_ts);
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            // Random delay between model warmups: 2-5s instead of fixed 1s
+            let delay_ms = {use rand::Rng; rand::thread_rng().gen_range(2000..=5000u64)};
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
         }
         let _ = crate::modules::account::refresh_all_quotas_logic().await;
     });

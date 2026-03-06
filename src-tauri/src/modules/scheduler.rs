@@ -1,5 +1,6 @@
 use chrono::Utc;
 use once_cell::sync::Lazy;
+use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::time::{self, Duration};
@@ -54,12 +55,20 @@ pub fn check_cooldown(key: &str, cooldown_seconds: i64) -> bool {
 pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate::commands::proxy::ProxyServiceState) {
     tauri::async_runtime::spawn(async move {
         logger::log_info("Smart Warmup Scheduler started. Monitoring quota at 100%...");
-        
-        // Scan every 10 minutes
-        let mut interval = time::interval(Duration::from_secs(600));
 
         loop {
-            interval.tick().await;
+            // Jittered interval: 8-12 minutes instead of fixed 10
+            let jitter_secs = rand::thread_rng().gen_range(480..=720);
+            tokio::time::sleep(Duration::from_secs(jitter_secs)).await;
+
+            // Skip warmup while proxy is actively serving requests to prevent chain bans
+            {
+                let instance_lock = proxy_state.instance.read().await;
+                if instance_lock.is_some() {
+                    logger::log_info("[Scheduler] Proxy is running, skipping warmup cycle to prevent chain bans");
+                    continue;
+                }
+            }
 
             // Load configuration
             let Ok(app_config) = config::load_app_config() else {
@@ -130,7 +139,8 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                         {
                             let history = WARMUP_HISTORY.lock().unwrap();
                             if let Some(&last_warmup_ts) = history.get(&history_key) {
-                                let cooldown_seconds = 14400;
+                                // Jittered cooldown: 3.5-4.5 hours instead of fixed 4h
+                        let cooldown_seconds: i64 = rand::thread_rng().gen_range(12600..=16200);
                                 if now_ts - last_warmup_ts < cooldown_seconds {
                                     skipped_cooldown += 1;
                                     continue;
@@ -227,7 +237,9 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                         }
                         
                         if batch_idx < (warmup_tasks.len() + batch_size - 1) / batch_size - 1 {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            // Random delay between batches: 3-8s instead of fixed 2s
+                            let delay_ms = rand::thread_rng().gen_range(3000..=8000u64);
+                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                         }
                     }
 
@@ -318,9 +330,9 @@ pub async fn trigger_warmup_for_account(account: &Account) {
             {
                 let history = WARMUP_HISTORY.lock().unwrap();
 
-                // 4 hour cooldown (Pro account resets every 5h, 1h margin)
+                // Jittered cooldown: 3.5-4.5 hours (Pro account resets every 5h, 1h margin)
                 if let Some(&last_warmup_ts) = history.get(&history_key) {
-                    let cooldown_seconds = 14400;
+                    let cooldown_seconds: i64 = rand::thread_rng().gen_range(12600..=16200);
                     if now_ts - last_warmup_ts < cooldown_seconds {
                         // Still in cooldown, skip
                         continue;

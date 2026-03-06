@@ -301,15 +301,50 @@ impl UpstreamClient {
         }
 
         // 2. Device & Session Identity
-        // Machine ID (Persistent)
+        // Machine ID — per-account deterministic hash to prevent cross-account correlation
         if let Ok(mid) = machine_uid::get() {
-             if let Ok(mid_val) = header::HeaderValue::from_str(&mid) {
-                 headers.insert("x-machine-id", mid_val);
-             }
+            let machine_id_value = match account_id {
+                Some(aid) => {
+                    use sha2::{Sha256, Digest};
+                    let mut hasher = Sha256::new();
+                    hasher.update(mid.as_bytes());
+                    hasher.update(b"|");
+                    hasher.update(aid.as_bytes());
+                    let hash = hasher.finalize();
+                    format!("{:x}", hash)
+                }
+                None => mid,
+            };
+            if let Ok(mid_val) = header::HeaderValue::from_str(&machine_id_value) {
+                headers.insert("x-machine-id", mid_val);
+            }
         }
-        // Session ID (Per App Launch)
-        if let Ok(sess_val) = header::HeaderValue::from_str(&crate::constants::SESSION_ID) {
-            headers.insert("x-vscode-sessionid", sess_val);
+        // Session ID — per-account deterministic UUID to prevent session correlation
+        {
+            let base_session = &*crate::constants::SESSION_ID;
+            let session_value = match account_id {
+                Some(aid) => {
+                    use sha2::{Sha256, Digest};
+                    let mut hasher = Sha256::new();
+                    hasher.update(base_session.as_bytes());
+                    hasher.update(b"|");
+                    hasher.update(aid.as_bytes());
+                    let hash = hasher.finalize();
+                    // Format as UUID-like string
+                    format!(
+                        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+                        u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]]),
+                        u16::from_be_bytes([hash[4], hash[5]]),
+                        u16::from_be_bytes([hash[6], hash[7]]),
+                        u16::from_be_bytes([hash[8], hash[9]]),
+                        u64::from_be_bytes([0, 0, hash[10], hash[11], hash[12], hash[13], hash[14], hash[15]])
+                    )
+                }
+                None => base_session.clone(),
+            };
+            if let Ok(sess_val) = header::HeaderValue::from_str(&session_value) {
+                headers.insert("x-vscode-sessionid", sess_val);
+            }
         }
 
         // [REMOVED v4.1.24] x-goog-api-client (gl-node/fire/grpc) header has been removed.

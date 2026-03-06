@@ -25,17 +25,25 @@ function BackgroundTaskRunner() {
         prevAutoRefreshRef.current = auto_refresh;
 
         if (auto_refresh && refresh_interval > 0) {
-            console.log(`[BackgroundTask] Starting auto-refresh quota timer: ${refresh_interval} mins`);
-            intervalId = setInterval(() => {
-                console.log('[BackgroundTask] Auto-refreshing all quotas...');
-                refreshAllQuotas();
-            }, Math.min(refresh_interval * 60 * 1000, 2147483647));
+            // Jittered refresh: ±30% of configured interval to avoid predictable patterns
+            const scheduleNext = () => {
+                const baseMs = refresh_interval * 60 * 1000;
+                const jitter = baseMs * 0.3;
+                const delay = Math.min(baseMs + (Math.random() * 2 - 1) * jitter, 2147483647);
+                console.log(`[BackgroundTask] Next auto-refresh in ${Math.round(delay / 1000 / 60)}min`);
+                intervalId = setTimeout(() => {
+                    console.log('[BackgroundTask] Auto-refreshing all quotas...');
+                    refreshAllQuotas();
+                    scheduleNext();
+                }, delay);
+            };
+            scheduleNext();
         }
 
         return () => {
             if (intervalId) {
                 console.log('[BackgroundTask] Clearing auto-refresh timer');
-                clearInterval(intervalId);
+                clearTimeout(intervalId);
             }
         };
     }, [config?.auto_refresh, config?.refresh_interval]);
@@ -56,17 +64,24 @@ function BackgroundTaskRunner() {
         prevAutoSyncRef.current = auto_sync;
 
         if (auto_sync && sync_interval > 0) {
-            console.log(`[BackgroundTask] Starting auto-sync account timer: ${sync_interval} mins`);
-            intervalId = setInterval(() => {
-                console.log('[BackgroundTask] Auto-syncing current account from DB...');
-                syncAccountFromDb();
-            }, Math.min(sync_interval * 60 * 1000, 2147483647));
+            // Jittered sync: ±30% of configured interval for consistency
+            const scheduleNext = () => {
+                const baseMs = sync_interval * 60 * 1000;
+                const jitter = baseMs * 0.3;
+                const delay = Math.min(baseMs + (Math.random() * 2 - 1) * jitter, 2147483647);
+                intervalId = setTimeout(() => {
+                    console.log('[BackgroundTask] Auto-syncing current account from DB...');
+                    syncAccountFromDb();
+                    scheduleNext();
+                }, delay);
+            };
+            scheduleNext();
         }
 
         return () => {
             if (intervalId) {
                 console.log('[BackgroundTask] Clearing auto-sync timer');
-                clearInterval(intervalId);
+                clearTimeout(intervalId);
             }
         };
     }, [config?.auto_sync, config?.sync_interval]);

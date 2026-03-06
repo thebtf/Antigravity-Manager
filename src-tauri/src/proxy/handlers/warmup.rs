@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
+use rand::Rng;
+
 use crate::proxy::mappers::gemini::wrapper::wrap_request;
 use crate::proxy::monitor::ProxyRequestLog;
 use crate::proxy::server::AppState;
@@ -109,15 +111,24 @@ pub async fn handle_warmup(
             chrono::Utc::now().timestamp_millis(),
             &uuid::Uuid::new_v4().to_string()[..8]
         );
+
+        // Randomized warmup prompts to avoid pattern detection
+        let warmup_prompts = [
+            "hi", "hello", "hey", "test", "ping", "ok",
+            ".", "1", "yes", "thanks", "help",
+        ];
+        let prompt = warmup_prompts[rand::thread_rng().gen_range(0..warmup_prompts.len())];
+        let max_tokens = rand::thread_rng().gen_range(1..=5i32);
+
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
             model: req.model.clone(),
             messages: vec![crate::proxy::mappers::claude::models::Message {
                 role: "user".to_string(),
                 content: crate::proxy::mappers::claude::models::MessageContent::String(
-                    "ping".to_string(),
+                    prompt.to_string(),
                 ),
             }],
-            max_tokens: Some(1),
+            max_tokens: Some(max_tokens),
             stream: false,
             system: None,
             temperature: None,
@@ -163,13 +174,22 @@ pub async fn handle_warmup(
             &uuid::Uuid::new_v4().to_string()[..8]
         );
 
+        // Randomized warmup prompts to avoid pattern detection
+        let warmup_prompts = [
+            "hi", "hello", "hey", "test", "ping", "ok",
+            ".", "1", "yes", "thanks", "help",
+        ];
+        let prompt = warmup_prompts[rand::thread_rng().gen_range(0..warmup_prompts.len())];
+        let temperature: f64 = rand::thread_rng().gen_range(0..=3) as f64 * 0.1;
+
         let base_request = if is_image {
+            let max_tokens = rand::thread_rng().gen_range(5..=20i32);
             json!({
                 "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "maxOutputTokens": 10,
-                    "temperature": 0,
+                    "maxOutputTokens": max_tokens,
+                    "temperature": temperature,
                     "responseModalities": ["TEXT"]
                 },
                 "session_id": session_id
@@ -177,9 +197,9 @@ pub async fn handle_warmup(
         } else {
             json!({
                 "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0
+                    "temperature": temperature
                 },
                 "session_id": session_id
             })
