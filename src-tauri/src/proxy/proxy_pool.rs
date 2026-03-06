@@ -78,7 +78,7 @@ impl ProxyPoolManager {
     /// 3. 如果以上均无，则检查全局上游代理 (Upstream Proxy) [由调用方 fallback]
     pub async fn get_effective_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
         let mut builder = Client::builder()
-            .emulation(Emulation::Chrome123)
+            .emulation(Emulation::Chrome136)
             .timeout(Duration::from_secs(timeout_secs));
         
         // 尝试获取代理配置
@@ -468,9 +468,9 @@ impl ProxyPoolManager {
 
         let client_result = Client::builder()
             .proxy(proxy_cfg.proxy)
-            .emulation(Emulation::Chrome123)
+            .emulation(Emulation::Chrome136)
             .timeout(Duration::from_secs(10))
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36")
             .build();
         
         let client = match client_result {

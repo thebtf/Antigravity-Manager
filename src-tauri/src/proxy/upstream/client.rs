@@ -101,7 +101,7 @@ impl UpstreamClient {
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
     ) -> Result<Client, rquest::Error> {
         let mut builder = Client::builder()
-            .emulation(rquest_util::Emulation::Chrome123)
+            .emulation(rquest_util::Emulation::Chrome136)
             // Connection settings (优化连接复用，减少建立开销)
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(16) // 每主机最多 16 个空闲连接
@@ -131,7 +131,7 @@ impl UpstreamClient {
     ) -> Result<Client, rquest::Error> {
         // Reuse base settings similar to default client but with specific proxy
         let builder = Client::builder()
-            .emulation(rquest_util::Emulation::Chrome123)
+            .emulation(rquest_util::Emulation::Chrome136)
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(16)
             .pool_idle_timeout(Duration::from_secs(90))
