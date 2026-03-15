@@ -447,7 +447,7 @@ pub fn transform_openai_request(
         "topK": 40,
     });
 
-    // [FIX] 移除旧的硬编码限额，改为动态查询 (v4.1.28)
+    // [FIX] 移除旧的硬编码限额，改为动态查询 (v4.1.29)
     if let Some(max_tokens) = request.max_tokens {
          gen_config["maxOutputTokens"] = json!(max_tokens);
     } else {
@@ -474,7 +474,7 @@ pub fn transform_openai_request(
                 "includeThoughts": false
             });
         } else {
-            // [CONFIGURABLE] 根据配置和模型规格决定 thinking_budget (v4.1.28)
+            // [CONFIGURABLE] 根据配置和模型规格决定 thinking_budget (v4.1.29)
             let tb_config = crate::proxy::config::get_thinking_budget_config();
             // 优先使用用户在请求中传入的 budget，否则从规格表中获取默认值
             let default_budget = model_specs::get_thinking_budget(mapped_model, token);

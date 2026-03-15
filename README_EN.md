@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.1.28)
+> Professional AI Account Management & Protocol Proxy System (v4.1.29)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.28-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.1.29-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -122,7 +122,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.28/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.29/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -132,7 +132,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.28`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.29`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -283,6 +283,25 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v4.1.29 (2026-03-12)**:
+        -   **[IMPORTANT WARNING] Google Risk Control & Third-Party Tool Risks**:
+            -   Due to tightened Google risk control, third-party tools may be suspended for violating Terms of Service when used with Antigravity, Gemini CLI, or Gemini Code Assist.
+            -   Accessing Antigravity, Gemini CLI, or Gemini Code Assist using third-party software, tools, or services (e.g., using OpenClaw and Antigravity OAuth) violates applicable terms and policies. Such actions may lead to account suspension or termination. It is recommended to only use the switching feature.
+            -   **Appeal Link**: If you believe your account was suspended by mistake, please submit an appeal via [this link](https://forms.gle/hGzM9MEUv2azZsrb9).
+            -   Stay tuned to our [Telegram Channel](https://t.me/AntigravityManager) for latest updates.
+            -   ![Risk Warning](docs/images/CleanShot%202026-03-12%20at%2009.34.34@2x.png)
+        -   **[Core Feature] Account-Aware Dynamic Model Remapping & Fallback (PR #2286)**:
+            -   **Dynamic Fallback Logic**: Resolved `404/400` errors caused by inconsistent model tier access (e.g., `high` vs `low`) across different accounts. The system now automatically executes smooth fallbacks between models in the same series (e.g., `gemini-3.1-pro-high` -> `gemini-3.1-pro-low` -> default tier) based on the active account's permissions.
+            -   **Real-time Permission Validation**: Dynamically validates target model availability via account file data before requests enter the handler, achieving true "account-aware" scheduling.
+            -   **Remapping Priority Optimization**: Established a scientific priority chain: `API Deprecation Rules > Account-Aware Fallback > User-Defined Mapping > System Default Mapping`.
+            -   **Documentation Sync**: Added `docs/model-remapping-logic.md` to fully document the complex remapping logic flow.
+        -   **[Core Fix] Enhanced Windows CLI Detection & Path Scanning (PR #2298)**:
+            -   **Active Path Scanning**: Introduced automatic scanning for `APPDATA`, `LOCALAPPDATA`, and `NVM_HOME` to ensure precise identification even if the CLI is not in the system `PATH`.
+            -   **Script Handling Optimization**: Improved invocation of `.cmd` and `.bat` scripts on Windows, resolving issues with unstable version retrieval during direct execution.
+            -   **Security Hardening**: Added path security validation logic with absolute path checks and character filtering to prevent command injection risks.
+        -   **[Continuous Integration] Integrated GitHub Actions CI Workflow (PR #2298)**:
+            -   **Automated Quality Control**: Built a basic CI pipeline covering Rust formatting, linting, and cross-platform compilation tests to enhance code compliance and delivery stability.
+
     *   **v4.1.28 (2026-03-03)**:
         -   **[IMPORTANT WARNING] Google Risk Control & Third-Party Tool Risks**:
             -   Due to tightened Google risk control, third-party tools may be suspended for violating Terms of Service when used with Antigravity, Gemini CLI, or Gemini Code Assist.
